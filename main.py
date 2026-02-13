@@ -1,8 +1,8 @@
 import os
 import feedparser
-import google.generativeai as genai
 import smtplib
 import urllib.parse
+from genai import Client  # 최신 google-genai 라이브러리 사용
 from email.mime.text import MIMEText
 
 # 1. arXiv 논문 수집
@@ -21,15 +21,17 @@ def fetch_papers():
     print(f"총 {len(all_entries)}건의 논문 발견")
     return all_entries
 
-# 2. Gemini 평가 (가장 호환성 높은 모델명 사용)
+# 2. Gemini 평가 (최신 google-genai 라이브러리 방식)
 def evaluate_papers(papers):
-    print("--- [Step 2] Gemini 평가 시작 ---")
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    
-    # 모델명을 가장 기본형인 'gemini-1.5-flash'로 변경합니다.
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
+    print("--- [Step 2] Gemini 평가 시작 (최신 SDK) ---")
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("❌ GEMINI_API_KEY가 설정되지 않았습니다.")
+        return []
+
+    client = Client(api_key=api_key)
     evaluated_list = []
+
     for p in papers[:5]:
         prompt = f"""
         너는 MIT SPARK Lab과 Meta FAIR의 연구원이야. 다음 논문을 평가해줘.
@@ -39,8 +41,11 @@ def evaluate_papers(papers):
         Summary: {p.summary}
         """
         try:
-            response = model.generate_content(prompt)
-            # 텍스트 존재 여부 확인
+            # 최신 SDK의 호출 방식 (모델명: 'gemini-1.5-flash')
+            response = client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=prompt
+            )
             if response and response.text:
                 evaluated_list.append({"title": p.title, "link": p.link, "analysis": response.text})
                 print(f"✅ 평가 완료: {p.title[:20]}...")
@@ -56,10 +61,10 @@ def send_email(evaluated_papers):
     receiver = os.getenv("RECEIVER_EMAIL")
 
     if not evaluated_papers:
-        print("⚠️ 발송할 평가 데이터가 없어 메일을 보내지 않습니다.")
+        print("⚠️ 발송할 평가 데이터가 없습니다.")
         return
 
-    content = "📚 오늘의 Robotics & CV 논문 리포트\n\n"
+    content = "📚 오늘의 Robotics & CV 논문 리포트 (최신 봇)\n\n"
     for p in evaluated_papers:
         content += f"📌 {p['title']}\n🔗 {p['link']}\n{p['analysis']}\n"
         content += "-"*30 + "\n"
