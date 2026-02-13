@@ -2,7 +2,7 @@ import os
 import feedparser
 import smtplib
 import urllib.parse
-from genai import Client  # 최신 google-genai 라이브러리 사용
+from google import genai  # 임포트 경로 수정 완료
 from email.mime.text import MIMEText
 
 # 1. arXiv 논문 수집
@@ -21,7 +21,7 @@ def fetch_papers():
     print(f"총 {len(all_entries)}건의 논문 발견")
     return all_entries
 
-# 2. Gemini 평가 (최신 google-genai 라이브러리 방식)
+# 2. Gemini 평가
 def evaluate_papers(papers):
     print("--- [Step 2] Gemini 평가 시작 (최신 SDK) ---")
     api_key = os.getenv("GEMINI_API_KEY")
@@ -29,7 +29,7 @@ def evaluate_papers(papers):
         print("❌ GEMINI_API_KEY가 설정되지 않았습니다.")
         return []
 
-    client = Client(api_key=api_key)
+    client = genai.Client(api_key=api_key) # 호출 방식 수정 완료
     evaluated_list = []
 
     for p in papers[:5]:
@@ -41,7 +41,6 @@ def evaluate_papers(papers):
         Summary: {p.summary}
         """
         try:
-            # 최신 SDK의 호출 방식 (모델명: 'gemini-1.5-flash')
             response = client.models.generate_content(
                 model='gemini-1.5-flash',
                 contents=prompt
