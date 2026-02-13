@@ -2,10 +2,10 @@ import os
 import feedparser
 import google.generativeai as genai
 import smtplib
-import urllib.parse  # URL 인코딩을 위해 추가
+import urllib.parse
 from email.mime.text import MIMEText
 
-# 1. arXiv 논문 수집
+# 1. arXiv 논문 수집 (안전한 URL 인코딩 포함)
 def fetch_papers():
     print("--- [Step 1] arXiv 논문 수집 중... ---")
     queries = [
@@ -14,7 +14,6 @@ def fetch_papers():
     ]
     all_entries = []
     for q in queries:
-        # 공백이나 특수문자를 URL용으로 안전하게 변환
         encoded_q = urllib.parse.quote(q)
         url = f"http://export.arxiv.org/api/query?search_query={encoded_q}&max_results=5&sortBy=submittedDate&sortOrder=descending"
         feed = feedparser.parse(url)
@@ -22,42 +21,42 @@ def fetch_papers():
     print(f"총 {len(all_entries)}건의 논문 발견")
     return all_entries
 
-# 2. Gemini로 논문 평가
+# 2. Gemini 평가 (모델 호출 안정화)
 def evaluate_papers(papers):
     print("--- [Step 2] Gemini 평가 시작 ---")
     genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # 모델명 앞에 'models/'를 명시적으로 붙여서 호출합니다.
+    model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
     
     evaluated_list = []
     for p in papers[:5]:
         prompt = f"""
-        너는 MIT SPARK Lab과 Meta FAIR의 시니어 연구원이야. 
-        다음 논문 초록을 읽고 중요도를 0~10점으로 평가하고 한줄요약해줘.
-        응답 형식:
-        점수: [점수]
-        이유: [추천이유]
-        요약: [한줄요약]
-
+        너는 MIT SPARK Lab과 Meta FAIR의 연구원이야. 다음 논문을 평가해줘.
+        형식 - 점수: [0~10], 이유: [한줄], 요약: [한줄]
+        
         Title: {p.title}
         Summary: {p.summary}
         """
         try:
+            # 안전한 생성을 위해 에러 처리를 강화합니다.
             response = model.generate_content(prompt)
-            evaluated_list.append({"title": p.title, "link": p.link, "analysis": response.text})
-            print(f"✅ 평가 완료: {p.title[:30]}...")
+            if response.text:
+                evaluated_list.append({"title": p.title, "link": p.link, "analysis": response.text})
+                print(f"✅ 평가 완료: {p.title[:20]}...")
         except Exception as e:
             print(f"❌ 평가 실패: {e}")
     return evaluated_list
 
-# 3. 이메일 발송
+# 3. 이메일 발송 (인증 로깅 강화)
 def send_email(evaluated_papers):
     print("--- [Step 3] 이메일 발송 중... ---")
     sender = os.getenv("EMAIL_USER")
     password = os.getenv("EMAIL_PASSWORD")
     receiver = os.getenv("RECEIVER_EMAIL")
 
-    if not sender or not receiver:
-        print("❌ 이메일 설정(EMAIL_USER 또는 RECEIVER_EMAIL)이 누락되었습니다.")
+    if not evaluated_papers:
+        print("⚠️ 발송할 평가 데이터가 없습니다.")
         return
 
     content = "📚 오늘의 Robotics & CV 논문 리포트\n\n"
@@ -71,12 +70,14 @@ def send_email(evaluated_papers):
     msg['To'] = receiver
 
     try:
+        # TLS 설정으로 더 안전하게 발송 시도
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(sender, password)
             server.send_message(msg)
         print("🎉 이메일 발송 성공!")
     except Exception as e:
-        print(f"❌ 이메일 발송 실패: {e}")
+        print(f"❌ 이메일 발송 최종 실패: {e}")
+        print("💡 팁: EMAIL_PASSWORD가 구글 계정 비번이 아닌 '앱 비밀번호 16자리'인지 확인하세요.")
 
 if __name__ == "__main__":
     try:
