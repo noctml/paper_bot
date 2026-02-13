@@ -5,88 +5,100 @@ import urllib.parse
 from openai import OpenAI
 from email.mime.text import MIMEText
 
-# 1. arXiv 논문 수집 (URL 인코딩 완벽 적용)
+# 1. arXiv 논문 수집 (안전한 URL 인코딩 및 확장된 키워드)
 def fetch_papers():
     print("--- [Step 1] arXiv 논문 수집 중... ---")
+    # CVPR, ICRA, IROS 등 탑티어 학회 관련 논문을 더 잘 잡기 위한 쿼리
     queries = [
-        'cat:cs.RO AND ("SLAM" OR "Spatial AI" OR "Scene Graph")',
-        'cat:cs.CV AND ("Embodied AI" OR "3D Reconstruction")'
+        'cat:cs.RO AND (SLAM OR "Spatial AI" OR "Scene Graph" OR ICRA OR IROS)',
+        'cat:cs.CV AND ("Embodied AI" OR "3D Reconstruction" OR CVPR OR ICCV)'
     ]
     all_entries = []
     for q in queries:
-        # 공백과 특수문자를 웹 주소용으로 변환 (핵심 해결책)
         encoded_q = urllib.parse.quote(q)
-        url = f"http://export.arxiv.org/api/query?search_query={encoded_q}&max_results=5&sortBy=submittedDate&sortOrder=descending"
+        url = f"http://export.arxiv.org/api/query?search_query={encoded_q}&max_results=15&sortBy=submittedDate&sortOrder=descending"
         feed = feedparser.parse(url)
         all_entries.extend(feed.entries)
-    print(f"총 {len(all_entries)}건의 논문 발견")
-    return all_entries
+    
+    # 중복 제거
+    unique_papers = {p.link: p for p in all_entries}.values()
+    print(f"총 {len(unique_papers)}건의 고품질 논문 후보 발견")
+    return list(unique_papers)
 
-# 2. OpenAI 평가
+# 2. OpenAI 평가 (사용자 맞춤형 분석 로직)
 def evaluate_papers(papers):
-    print("--- [Step 2] OpenAI 평가 시작 ---")
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        print("❌ OPENAI_API_KEY가 설정되지 않았습니다.")
-        return []
+    print("--- [Step 2] 논문 큐레이션 및 심층 분석 시작 ---")
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    
+    # 분석 프롬프트 고도화
+    system_prompt = """
+    너는 MIT SPARK Lab의 Luca Carlone과 Meta Reality Labs의 수석 연구원이야.
+    논문 리스트 중 사용자가 좋아할 '고전적 엄밀성을 갖춘 SLAM/Robotcs 연구' 2개와 
+    최근 이슈가 되는 '최신 Deep Learning/Vision 트렌드' 3개를 엄선해줘.
+    
+    각 논문은 아래 형식을 엄격히 지켜서 작성해:
+    [카테고리: 선호 주제 / 최신 이슈]
+    1. 핵심 1줄 요약: 
+    2. 제안 방법론 및 기술: (짧고 핵심적인 기술 스택 중심)
+    3. 연구 가치 및 사고의 방향: (이 연구가 Luca Carlone이나 Meta의 연구 방향과 어떻게 맞닿아 있는지, 어떤 새로운 시각을 가져야 하는지 분석)
+    """
+
+    evaluated_content = ""
+    
+    # 상위 10개 중 가장 가치 있는 5개를 골라달라고 요청
+    candidates = ""
+    for i, p in enumerate(papers[:10]):
+        candidates += f"ID: {i}\nTitle: {p.title}\nSummary: {p.summary}\n\n"
+
+    prompt = f"다음 논문 후보들 중 최적의 5개를 선정해 분석해줘:\n\n{candidates}"
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+        evaluated_content = response.choices[0].message.content
         
-    client = OpenAI(api_key=api_key)
-    evaluated_list = []
+        # 마지막 핵심 질문 추가를 위한 별도 호출 (인사이트 강화)
+        insight_response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "너는 연구 멘토야. 위 논문들을 관통하는 핵심적인 질문 하나를 던져줘."},
+                {"role": "assistant", "content": evaluated_content},
+                {"role": "user", "content": "종합적으로 내 연구에 인사이트를 줄만한 하나의 핵심 질문으로 마무리해줘."}
+            ]
+        )
+        final_insight = insight_response.choices[0].message.content
+        return evaluated_content + "\n\n" + "="*50 + "\n" + "💡 [Today's Research Insight]\n" + final_insight
 
-    for p in papers[:5]:
-        prompt = f"""
-        너는 MIT SPARK Lab과 Meta FAIR의 시니어 연구원이야. 
-        다음 논문 초록을 읽고 중요도를 0~10점으로 평가하고 한줄요약해줘.
-        형식 - 점수: [점수], 이유: [추천이유], 요약: [한줄요약]
-
-        Title: {p.title}
-        Summary: {p.summary}
-        """
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            analysis = response.choices[0].message.content
-            evaluated_list.append({"title": p.title, "link": p.link, "analysis": analysis})
-            print(f"✅ 평가 완료: {p.title[:20]}...")
-        except Exception as e:
-            print(f"❌ 평가 실패: {e}")
-    return evaluated_list
+    except Exception as e:
+        print(f"❌ 분석 실패: {e}")
+        return None
 
 # 3. 이메일 발송
-def send_email(evaluated_papers):
-    print("--- [Step 3] 이메일 발송 중... ---")
+def send_email(content):
+    print("--- [Step 3] 고도화된 리포트 발송 중... ---")
+    if not content: return
+
     sender = os.getenv("EMAIL_USER")
     password = os.getenv("EMAIL_PASSWORD")
     receiver = os.getenv("RECEIVER_EMAIL")
 
-    if not evaluated_papers:
-        print("⚠️ 발송할 데이터가 없습니다.")
-        return
-
-    content = "📚 오늘의 Robotics & CV 논문 리포트 (OpenAI)\n\n"
-    for p in evaluated_papers:
-        content += f"📌 {p['title']}\n🔗 {p['link']}\n{p['analysis']}\n"
-        content += "-"*30 + "\n"
-
     msg = MIMEText(content)
-    msg['Subject'] = "🚀 Robotics & CV 최신 논문 리포트"
-    msg['From'] = f"Research Bot <{sender}>"
+    msg['Subject'] = "🚀 [Top-tier] 오늘의 맞춤형 연구 브리핑"
+    msg['From'] = f"Research Mentor Bot <{sender}>"
     msg['To'] = receiver
 
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(sender, password)
-            server.send_message(msg)
-        print("🎉 이메일 발송 성공!")
-    except Exception as e:
-        print(f"❌ 이메일 발송 실패: {e}")
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+        server.login(sender, password)
+        server.send_message(msg)
+    print("🎉 이메일 발송 성공!")
 
 if __name__ == "__main__":
-    try:
-        papers = fetch_papers()
-        evaluated = evaluate_papers(papers)
-        send_email(evaluated)
-    except Exception as e:
-        print(f"❌ 최종 실행 에러: {e}")
+    papers = fetch_papers()
+    report = evaluate_papers(papers)
+    send_email(report)
