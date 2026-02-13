@@ -2,7 +2,7 @@ import os
 import feedparser
 import smtplib
 import urllib.parse
-from google import genai  # 임포트 경로 수정 완료
+from google import genai 
 from email.mime.text import MIMEText
 
 # 1. arXiv 논문 수집
@@ -21,15 +21,15 @@ def fetch_papers():
     print(f"총 {len(all_entries)}건의 논문 발견")
     return all_entries
 
-# 2. Gemini 평가
+# 2. Gemini 평가 (경로 명시형 모델명 사용)
 def evaluate_papers(papers):
-    print("--- [Step 2] Gemini 평가 시작 (최신 SDK) ---")
+    print("--- [Step 2] Gemini 평가 시작 ---")
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("❌ GEMINI_API_KEY가 설정되지 않았습니다.")
         return []
 
-    client = genai.Client(api_key=api_key) # 호출 방식 수정 완료
+    client = genai.Client(api_key=api_key)
     evaluated_list = []
 
     for p in papers[:5]:
@@ -41,8 +41,9 @@ def evaluate_papers(papers):
         Summary: {p.summary}
         """
         try:
+            # 모델명 앞에 'models/'를 붙여 경로 문제를 해결합니다.
             response = client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='models/gemini-1.5-flash',
                 contents=prompt
             )
             if response and response.text:
@@ -63,7 +64,7 @@ def send_email(evaluated_papers):
         print("⚠️ 발송할 평가 데이터가 없습니다.")
         return
 
-    content = "📚 오늘의 Robotics & CV 논문 리포트 (최신 봇)\n\n"
+    content = "📚 오늘의 Robotics & CV 논문 리포트\n\n"
     for p in evaluated_papers:
         content += f"📌 {p['title']}\n🔗 {p['link']}\n{p['analysis']}\n"
         content += "-"*30 + "\n"
