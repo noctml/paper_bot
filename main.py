@@ -5,24 +5,24 @@ import urllib.parse
 from openai import OpenAI
 from email.mime.text import MIMEText
 
-# 1. arXiv 논문 수집 (안전한 URL 인코딩 및 확장된 키워드)
+# 1. arXiv 논문 수집 (검색 키워드 최적화)
 def fetch_papers():
     print("--- [Step 1] arXiv 논문 수집 중... ---")
-    # CVPR, ICRA, IROS 등 탑티어 학회 관련 논문을 더 잘 잡기 위한 쿼리
+    # 학회 이름을 직접 넣기보다 분야별 핵심 키워드로 검색하고 정렬하여 수집합니다.
     queries = [
-        'cat:cs.RO AND (SLAM OR "Spatial AI" OR "Scene Graph" OR ICRA OR IROS)',
-        'cat:cs.CV AND ("Embodied AI" OR "3D Reconstruction" OR CVPR OR ICCV)'
+        'cat:cs.RO AND (SLAM OR "Spatial AI" OR "3D Scene Graph" OR "Visual Odometry")',
+        'cat:cs.CV AND ("Embodied AI" OR "3D Reconstruction" OR "Vision-Language Model")'
     ]
     all_entries = []
     for q in queries:
         encoded_q = urllib.parse.quote(q)
-        url = f"http://export.arxiv.org/api/query?search_query={encoded_q}&max_results=15&sortBy=submittedDate&sortOrder=descending"
+        # 검색 결과 개수를 30개로 늘려 더 많은 후보군 중 고르게 합니다.
+        url = f"http://export.arxiv.org/api/query?search_query={encoded_q}&start=0&max_results=30&sortBy=submittedDate&sortOrder=descending"
         feed = feedparser.parse(url)
         all_entries.extend(feed.entries)
     
-    # 중복 제거
     unique_papers = {p.link: p for p in all_entries}.values()
-    print(f"총 {len(unique_papers)}건의 고품질 논문 후보 발견")
+    print(f"총 {len(unique_papers)}건의 최신 논문 후보 발견")
     return list(unique_papers)
 
 # 2. OpenAI 평가 (사용자 맞춤형 분석 로직)
