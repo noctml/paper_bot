@@ -6,10 +6,9 @@ from openai import OpenAI
 from email.mime.text import MIMEText
 from datetime import datetime
 
-# 1. arXiv 논문 수집 (안정성 최우선 쿼리)
+# 1. arXiv 논문 데이터 확보 (가장 안정적인 쿼리 방식)
 def fetch_papers():
     print("--- [Step 1] arXiv 논문 데이터 확보 중... ---")
-    # 키워드를 분리하여 검색 확률을 높입니다.
     queries = [
         'cat:cs.RO AND (SLAM OR "Spatial AI" OR "Scene Graph")',
         'cat:cs.CV AND ("Embodied AI" OR "3D Reconstruction")'
@@ -18,36 +17,34 @@ def fetch_papers():
     all_entries = []
     for q in queries:
         encoded_q = urllib.parse.quote(q)
-        # 최신순 정렬하여 상위 25개씩 확보
         url = f"http://export.arxiv.org/api/query?search_query={encoded_q}&start=0&max_results=25&sortBy=submittedDate&sortOrder=descending"
         feed = feedparser.parse(url)
         all_entries.extend(feed.entries)
     
     unique_papers = {p.link: p for p in all_entries}.values()
     paper_list = list(unique_papers)
-    print(f"총 {len(paper_list)}건의 고품질 후보군을 확보했습니다.")
+    print(f"총 {len(paper_list)}건의 고품질 후보군 확보.")
     return paper_list
 
-# 2. 고도화된 분석 로직 (학회 추론 및 가독성 최적화)
+# 2. 고도화된 분석 로직 (전문 용어 영어 유지 + GPT-5-mini 최적화)
 def evaluate_papers(papers):
     if not papers: return None
     print("--- [Step 2] 시니어 연구원 페르소나 기반 심층 분석 시작 ---")
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    # 프롬프트: 학회 정보 추출 및 시니어 연구원급 비평 요구
+    # GPT-5-mini 모델 적용 (사용하시는 환경에 따라 모델명 확인 필요)
+    MODEL_NAME = "gpt-4o-mini" 
+
+    # 프롬프트: 기술 용어 영어 유지 가이드 추가
     system_prompt = f"""
     너는 MIT SPARK Lab의 Luca Carlone과 Meta FAIR의 시니어 연구원이야. 
-    사용자는 현재 3D Scene Graph, VIO, SLAM 분야의 연구자야. 
-    전달받은 논문 중 2024년~현재(오늘: {datetime.now().strftime('%Y-%m-%d')}) 사이에 발표된 탑티어 학회(CVPR, ICRA, IROS, ECCV, NeurIPS 등)급 논문 5개를 엄선해줘.
+    오늘 날짜({datetime.now().strftime('%Y-%m-%d')}) 기준, 최근 2년 내 발표된 탑티어(CVPR, ICRA, IROS 등)급 논문 5개를 엄선해.
 
-    [작성 가이드라인]
-    1. 학회 정보: 초록 내용이나 저자 정보를 토대로 발표된 학회(예: ICRA 2024)를 반드시 추론해 명시해. 불확실하면 'ArXiv (Top-tier candidate)'라고 적어.
-    2. 가독성: 각 섹션을 이모지와 구분선으로 명확히 나눠.
-    3. 똑똑한 비평: 단순 요약이 아니라, 이 연구가 사용자 연구의 '엄밀성'이나 '실용성' 측면에서 어떤 사고의 전환을 요구하는지Luca Carlone 스타일로 비평해.
-
-    [카테고리]
-    - 선호 주제: 수학적 엄밀성 기반 SLAM/Robotics (2개)
-    - 최신 이슈: Embodied AI 및 최신 Vision 트렌드 (3개)
+    [핵심 작성 규칙]
+    1. 용어 표기: SLAM, 3D Scene Graph, VIO, Factor Graph, Optimization, Transformer 등 모든 전문 용어와 기술적 키워드는 번역하지 말고 반드시 '영문 원어' 그대로 표기해. 설명 문구만 한글로 작성해.
+    2. 학회 정보: 초록을 분석하여 예상 학회(예: CVPR 2024)를 명시해. 불확실하면 'ArXiv'로 표기.
+    3. 똑똑한 비평: Luca Carlone의 '수학적 엄밀성'과 Meta의 '시스템적 효율성' 관점에서 이 연구가 사용자에게 어떤 새로운 Perspective를 주는지 분석해.
+    4. 가독성: 이모지와 굵은 구분선을 사용하여 시각적으로 구조화해.
     """
 
     candidates = ""
@@ -55,28 +52,28 @@ def evaluate_papers(papers):
         candidates += f"ID: {i}\nTitle: {p.title}\nDate: {p.published}\nSummary: {p.summary}\nLink: {p.link}\n\n"
 
     try:
+        # GPT-5-mini 등 최신 모델과의 호환성을 위해 temperature를 제거하거나 1로 설정
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"다음 논문 리스트에서 최고의 5개를 선별해 분석 리포트를 작성해줘:\n\n{candidates}"}
-            ],
-            temperature=0.6
+                {"role": "user", "content": f"다음 논문 후보 중 최적의 5개를 선별해 분석 리포트를 작성해:\n\n{candidates}"}
+            ]
         )
         report_content = response.choices[0].message.content
         
-        # 종합 인사이트 질문 생성 (가장 중요한 마무리)
+        # 종합 인사이트 질문 생성
         insight_response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=MODEL_NAME,
             messages=[
-                {"role": "system", "content": "너는 연구 멘토야. 사용자가 오늘 논문을 쓰거나 연구를 할 때 스스로에게 던져야 할 단 하나의 본질적인 질문을 뽑아줘."},
+                {"role": "system", "content": "너는 연구 멘토야. 기술 용어는 영어로 쓰되, 연구자의 뇌를 자극할 날카로운 질문 하나를 뽑아줘."},
                 {"role": "assistant", "content": report_content},
-                {"role": "user", "content": "이 논문들을 종합해 볼 때, 내가 내 연구주제에서 '다음 단계'로 넘어가기 위해 답해야 할 핵심 질문은 무엇일까?"}
+                {"role": "user", "content": "이 논문들을 관통하는 하나의 거대한 '핵심 질문'으로 마무리해줘."}
             ]
         )
         final_insight = insight_response.choices[0].message.content
         
-        header = f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n 📚 오늘의 시니어 연구원 브리핑 ({datetime.now().strftime('%Y-%m-%d')})\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        header = f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n 🧠 Senior Researcher Briefing ({datetime.now().strftime('%Y-%m-%d')})\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         footer = f"\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n💡 [MASTER QUESTION FOR TODAY]\n\n{final_insight}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         
         return header + report_content + footer
@@ -95,7 +92,7 @@ def send_email(content):
     receiver = os.getenv("RECEIVER_EMAIL")
 
     msg = MIMEText(content)
-    msg['Subject'] = f"🚀 [Top-tier Update] 오늘의 고도화된 연구 브리핑"
+    msg['Subject'] = f"🚀 [Intelligence Report] {datetime.now().strftime('%Y-%m-%d')} 연구 브리핑"
     msg['From'] = f"Senior Research Bot <{sender}>"
     msg['To'] = receiver
 
