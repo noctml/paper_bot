@@ -6,36 +6,49 @@ from openai import OpenAI
 from email.mime.text import MIMEText
 from datetime import datetime
 
-# 1. arXiv 논문 수집 (잘 작동했던 안정적인 쿼리 방식)
+# 1. arXiv 논문 수집 (검색 성공률 극대화 버전)
 def fetch_papers():
     print("--- [Step 1] arXiv 논문 수집 중... ---")
-    # 날짜 필터를 빼고 키워드로만 검색해야 결과가 잘 나옵니다.
+    
+    # arXiv API에서 가장 안정적인 쿼리 형식으로 변경
+    # 괄호와 복잡한 조건 대신 핵심 키워드 조합으로 충분한 양을 가져옵니다.
     queries = [
-        'cat:cs.RO AND ("SLAM" OR "Spatial AI" OR "Scene Graph")',
-        'cat:cs.CV AND ("Embodied AI" OR "3D Reconstruction")'
+        'cat:cs.RO AND SLAM',
+        'cat:cs.RO AND "Spatial AI"',
+        'cat:cs.RO AND "Scene Graph"',
+        'cat:cs.CV AND "Embodied AI"',
+        'cat:cs.CV AND "3D Reconstruction"'
     ]
+    
     all_entries = []
     for q in queries:
+        # 쿼리를 안전하게 인코딩
         encoded_q = urllib.parse.quote(q)
-        # 최신순 정렬을 통해 상위 30개를 가져옵니다.
-        url = f"http://export.arxiv.org/api/query?search_query={encoded_q}&max_results=30&sortBy=submittedDate&sortOrder=descending"
+        # 각 키워드별로 최신 20개씩 수집
+        url = f"http://export.arxiv.org/api/query?search_query={encoded_q}&start=0&max_results=20&sortBy=submittedDate&sortOrder=descending"
         feed = feedparser.parse(url)
         all_entries.extend(feed.entries)
+        print(f"'{q}' 검색 결과: {len(feed.entries)}건 발견")
     
+    # 중복 제거 (링크 기준)
     unique_papers = {p.link: p for p in all_entries}.values()
-    print(f"총 {len(unique_papers)}건의 논문 발견")
-    return list(unique_papers)
+    paper_list = list(unique_papers)
+    print(f"총 {len(paper_list)}건의 고유 논문 후보 확보")
+    return paper_list
 
-# 2. OpenAI 평가 (날짜 필터링 및 심층 분석)
+# 2. OpenAI 평가 (Luca Carlone & Meta 스타일 분석)
 def evaluate_papers(papers):
+    if not papers:
+        print("⚠️ 수집된 논문이 없습니다.")
+        return None
+
     print("--- [Step 2] OpenAI 심층 분석 시작 ---")
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    if not papers: return None
 
-    # 프롬프트에 '현재 날짜 기준 2년 내 논문 선별' 지침 추가
     system_prompt = f"""
     너는 MIT SPARK Lab의 Luca Carlone과 Meta FAIR의 수석 연구원이야.
     전달받은 논문들 중 **반드시 발행일이 최근 2년(2024년~현재) 이내인** 탑티어 급 논문 5개를 선정해줘.
+    오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}이야.
 
     [카테고리 구분]
     1. 선호 주제: 수학적 엄밀성을 갖춘 SLAM/Robotics (Luca Carlone 스타일) 2개
@@ -49,13 +62,13 @@ def evaluate_papers(papers):
     학회/날짜: (확인 가능한 경우 학회 이름과 날짜 명시)
     1. 핵심 1줄 요약: 
     2. 제안 방법론 및 기술: (기술 스택 중심으로 핵심 요약)
-    3. 연구 가치 및 사고의 방향: (Luca Carlone/Meta 관점에서 이 연구가 왜 가치 있고, 어떤 새로운 시각을 가져야 하는지 분석)
+    3. 연구 가치 및 사고의 방향: (이 연구가 왜 가치 있고, 어떤 새로운 시각을 가져야 하는지 Luca Carlone/Meta 관점에서 분석)
     --------------------------------------------------
     """
 
     candidates = ""
-    for i, p in enumerate(papers):
-        # 발행 날짜 정보를 OpenAI에게 함께 넘겨줍니다.
+    # 최신순으로 정렬된 상위 40개 후보를 OpenAI에게 전달
+    for i, p in enumerate(papers[:40]):
         candidates += f"ID: {i}\nTitle: {p.title}\nDate: {p.published}\nSummary: {p.summary}\nLink: {p.link}\n\n"
 
     try:
@@ -63,7 +76,7 @@ def evaluate_papers(papers):
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"오늘 날짜는 {datetime.now().strftime('%Y-%m-%d')}이야. 이 날짜 기준 2년 내의 최적의 논문 5개를 분석해줘:\n\n{candidates}"}
+                {"role": "user", "content": candidates}
             ],
             temperature=0.7
         )
@@ -73,7 +86,7 @@ def evaluate_papers(papers):
         insight_response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "너는 연구 멘토야. 위 논문들을 관통하는 날카로운 질문 하나를 던져줘."},
+                {"role": "system", "content": "너는 연구 멘토야. 위 논문들을 관통하는 아주 날카롭고 본질적인 질문 하나를 던져줘."},
                 {"role": "assistant", "content": evaluated_content},
                 {"role": "user", "content": "종합적으로 내 연구에 인사이트를 줄 핵심 질문 하나로 마무리해줘."}
             ]
@@ -87,8 +100,8 @@ def evaluate_papers(papers):
 
 # 3. 이메일 발송
 def send_email(content):
-    print("--- [Step 3] 리포트 발송 중... ---")
     if not content: return
+    print("--- [Step 3] 리포트 발송 중... ---")
 
     sender = os.getenv("EMAIL_USER")
     password = os.getenv("EMAIL_PASSWORD")
@@ -108,6 +121,6 @@ def send_email(content):
         print(f"❌ 이메일 발송 실패: {e}")
 
 if __name__ == "__main__":
-    papers = fetch_papers()
-    report = evaluate_papers(papers)
+    paper_candidates = fetch_papers()
+    report = evaluate_papers(paper_candidates)
     send_email(report)
