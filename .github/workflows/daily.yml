@@ -1,10 +1,9 @@
-name: Daily Robotics & CV Paper Bot (Gemini)
+name: Daily Robotics & CV Paper Bot (OpenAI)
 
 on:
   schedule:
-    # UTC 기준 23:00 (한국 시간 오전 8시)
     - cron: '0 23 * * *'
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch:
 
 jobs:
   build:
@@ -25,8 +24,8 @@ jobs:
 
       - name: Run Script
         env:
-          # OpenAI 대신 Gemini API Key를 불러옵니다.
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # 여기서 키 이름을 OPENAI_API_KEY로 정확히 맞춰야 합니다.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
